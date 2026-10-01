@@ -159,7 +159,12 @@ function expandSecretCandidates(secret: string): string[] {
  */
 function secretValuesFor(serverConfig: ServerConfig, extra: string[] = []): string[] {
   const dict = serverConfig.transport === 'stdio' ? serverConfig.env : serverConfig.headers
-  return [...Object.values(expandEnvVars(dict, process.env, new Set(serverConfig.allowedVars))), ...extra]
+  const values = Object.values(expandEnvVars(dict, process.env, new Set(serverConfig.allowedVars)))
+  if (serverConfig.transport !== 'stdio' && serverConfig.oauth && serverConfig.oauth !== true && serverConfig.oauth.clientSecret) {
+    const expandedSecret = expandEnvVars({ secret: serverConfig.oauth.clientSecret }, process.env, new Set(serverConfig.allowedVars)).secret
+    if (expandedSecret) values.push(expandedSecret)
+  }
+  return [...values, ...extra]
 }
 
 export interface ServerInstance {
@@ -627,17 +632,33 @@ export class ServerPool {
   private getOrCreateOAuthProvider(serverName: string, options: true | OAuthOptions): RemoteOAuthProvider {
     let provider = this.oauthProviders.get(serverName)
     if (!provider) {
-      provider = new RemoteOAuthProvider(serverName, options, this.config.externalUrl ?? '', this.oauthTokenStore)
+      let resolvedOptions = options
+      if (options !== true && options.clientSecret) {
+        const serverConfig = this.config.servers[serverName]
+        const allowed = new Set(serverConfig?.allowedVars)
+        const expandedSecret = expandEnvVars({ secret: options.clientSecret }, process.env, allowed).secret
+        resolvedOptions = { ...options, clientSecret: expandedSecret }
+      }
+      provider = new RemoteOAuthProvider(serverName, resolvedOptions, this.config.externalUrl ?? '', this.oauthTokenStore)
       this.oauthProviders.set(serverName, provider)
     }
     return provider
   }
 
-  /** Extra redaction candidates for {@link sanitizeErrorMessage}: this server's current access/refresh token, if any. */
+  /** Extra redaction candidates for {@link sanitizeErrorMessage}: this server's current access/refresh token, if any, plus configured OAuth client secret. */
   private oauthSecretCandidates(serverName: string): string[] {
+    const candidates: string[] = []
     const tokens = this.oauthTokenStore.getTokens(serverName)
-    if (!tokens) return []
-    return [tokens.accessToken, tokens.refreshToken].filter((v): v is string => typeof v === 'string')
+    if (tokens) {
+      if (typeof tokens.accessToken === 'string') candidates.push(tokens.accessToken)
+      if (typeof tokens.refreshToken === 'string') candidates.push(tokens.refreshToken)
+    }
+    const serverConfig = this.config.servers[serverName]
+    if (serverConfig && serverConfig.transport !== 'stdio' && serverConfig.oauth && serverConfig.oauth !== true && serverConfig.oauth.clientSecret) {
+      const expandedSecret = expandEnvVars({ secret: serverConfig.oauth.clientSecret }, process.env, new Set(serverConfig.allowedVars)).secret
+      if (expandedSecret) candidates.push(expandedSecret)
+    }
+    return candidates
   }
 
   /** Sanitizes an error for one server the same way a connect/reconnect failure is (see `sanitizeErrorMessage`), for callers outside this class (e.g. the `oauth/*` RPC handlers in `src/index.ts`) that surface an error for an unauthenticated caller. */

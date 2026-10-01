@@ -233,3 +233,63 @@ describe('ServerPool OAuth disconnect', () => {
   })
 })
 
+describe('ServerPool OAuth clientSecret expansion', () => {
+  const originalEnv = process.env
+
+  beforeEach(() => {
+    process.env = { ...originalEnv, TEST_CLIENT_SECRET: 'super-secret-pass-123' }
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  it('expands allowed environment variables in oauth.clientSecret', async () => {
+    const pool = new ServerPool({} as any, {
+      servers: {
+        oauth_server: {
+          transport: 'streamable-http',
+          url: 'https://mcp.example.com',
+          oauth: {
+            clientId: 'static-client-id',
+            clientSecret: '${TEST_CLIENT_SECRET}',
+          },
+          allowedVars: ['TEST_CLIENT_SECRET'],
+        },
+      },
+    }, toolManagerStub)
+
+    const provider = (pool as any).getOrCreateOAuthProvider('oauth_server', {
+      clientId: 'static-client-id',
+      clientSecret: '${TEST_CLIENT_SECRET}',
+    })
+
+    const clientInfo = await provider.clientInformation()
+    expect(clientInfo?.client_secret).toBe('super-secret-pass-123')
+  })
+
+  it('blocks unallowed sensitive environment variables in oauth.clientSecret', async () => {
+    const pool = new ServerPool({} as any, {
+      servers: {
+        oauth_server: {
+          transport: 'streamable-http',
+          url: 'https://mcp.example.com',
+          oauth: {
+            clientId: 'static-client-id',
+            clientSecret: '${TEST_CLIENT_SECRET:-fallback-secret}',
+          },
+          // TEST_CLIENT_SECRET is NOT in allowedVars
+        },
+      },
+    }, toolManagerStub)
+
+    const provider = (pool as any).getOrCreateOAuthProvider('oauth_server', {
+      clientId: 'static-client-id',
+      clientSecret: '${TEST_CLIENT_SECRET:-fallback-secret}',
+    })
+
+    const clientInfo = await provider.clientInformation()
+    expect(clientInfo?.client_secret).toBe('fallback-secret')
+  })
+})
+

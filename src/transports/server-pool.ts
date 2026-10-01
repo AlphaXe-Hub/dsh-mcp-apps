@@ -627,7 +627,14 @@ export class ServerPool {
   private getOrCreateOAuthProvider(serverName: string, options: true | OAuthOptions): RemoteOAuthProvider {
     let provider = this.oauthProviders.get(serverName)
     if (!provider) {
-      provider = new RemoteOAuthProvider(serverName, options, this.config.externalUrl ?? '', this.oauthTokenStore)
+      let resolvedOptions = options
+      if (options !== true && options.clientSecret) {
+        const serverConfig = this.config.servers[serverName]
+        const allowed = new Set(serverConfig?.allowedVars)
+        const expandedSecret = expandEnvVars({ secret: options.clientSecret }, process.env, allowed).secret
+        resolvedOptions = { ...options, clientSecret: expandedSecret }
+      }
+      provider = new RemoteOAuthProvider(serverName, resolvedOptions, this.config.externalUrl ?? '', this.oauthTokenStore)
       this.oauthProviders.set(serverName, provider)
     }
     return provider

@@ -1,9 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { apply } from '../src/index'
 import type { Config } from '../src/config'
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 import { ServerPool } from '../src/transports/server-pool'
 import type { ServerToolManager } from '../src/tool-manager'
+
+const mockAgentRegistry: {
+  get: (id: string) => any
+  list: () => any[]
+} = {
+  get: vi.fn(() => undefined as any),
+  list: vi.fn(() => [] as any[]),
+}
 
 function makeConnectionHarness() {
   const routes: Array<{ path: string; fetch: (request: Request) => Promise<Response> }> = []
@@ -103,6 +111,13 @@ describe('RPC tools/call Authorization and Lifecycle', () => {
       effect: vi.fn((fn: () => any) => {
         unloadPlugin = fn()
         return vi.fn()
+      }),
+      inject: vi.fn((services: string[], factory: (serviceCtx: any) => any) => {
+        const serviceCtx = {
+          ...(services.includes('agents') ? { agents: mockAgentRegistry } : {}),
+          ...(services.includes('approval') ? { approval: undefined } : {}),
+        }
+        return factory(serviceCtx)
       }),
     }
 
@@ -491,6 +506,7 @@ describe('RPC tools/call Authorization and Lifecycle', () => {
       tools: { register: vi.fn(def => { registeredToolDefs.push(def); return vi.fn() }) },
       connection: denyConnectionHarness.connection,
       effect: vi.fn(fn => fn()),
+      inject: vi.fn((_: string[], factory: (serviceCtx: any) => any) => factory({ agents: mockAgentRegistry })),
     }
     apply(mockCtx as any, denyConfig as any)
     deniedHandler = denyConnectionHarness.call
@@ -660,3 +676,177 @@ describe('RPC tools/call Authorization and Lifecycle', () => {
     }
   })
 })
+
+describe('RPC messages (ui/message form submission)', () => {
+  let rpcHandler: (endpoint: string, payload: unknown, signal?: AbortSignal) => Promise<any>
+  let unloadPlugin: () => Promise<void>
+  let toolManager: ServerToolManager
+  let followupSpy: any
+  let sessionToken: string
+
+  const config: Config = {
+    servers: {
+      analytics: {
+        transport: 'stdio',
+        command: 'analytics-srv',
+        allowAppToolCalls: true,
+      },
+    },
+  }
+
+  const mockClient = {
+    callTool: vi.fn(),
+  }
+
+  const tools: Tool[] = [
+    {
+      name: 'render_form',
+      description: 'Render interactive form',
+      inputSchema: { type: 'object' },
+      _meta: { ui: { resourceUri: 'ui://analytics/form' } },
+    },
+  ]
+
+  let registeredToolDefs: any[]
+
+  beforeEach(async () => {
+    registeredToolDefs = []
+    followupSpy = vi.fn()
+    mockClient.callTool.mockImplementation(async ({ name }: { name: string }) => {
+      return { content: [{ type: 'text', text: `Result of ${name}` }] }
+    })
+    ;(mockAgentRegistry.get as any).mockImplementation((_id: string) => ({ followup: followupSpy, id: _id }))
+
+    vi.spyOn(ServerPool.prototype, 'startAll').mockImplementation(function (this: any) {
+      toolManager = this.toolManager
+      return Promise.resolve()
+    })
+    vi.spyOn(ServerPool.prototype, 'stopAll').mockResolvedValue(undefined)
+    vi.spyOn(ServerPool.prototype, 'callTool').mockImplementation(async (server, name, args, signal) => ({
+      content: [{ type: 'text', text: `Success: ${server}.${name}` }],
+      args,
+    }))
+
+    const connectionHarness = makeConnectionHarness()
+    const mockCtx = {
+      tools: { register: vi.fn((def: any) => { registeredToolDefs.push(def); return vi.fn() }) },
+      connection: connectionHarness.connection,
+      effect: vi.fn((fn: () => any) => {
+        unloadPlugin = fn()
+        return vi.fn()
+      }),
+      inject: vi.fn((services: string[], factory: (serviceCtx: any) => any) => {
+        const serviceCtx = {
+          ...(services.includes('agents') ? { agents: mockAgentRegistry } : {}),
+          ...(services.includes('approval') ? { approval: undefined } : {}),
+        }
+        return factory(serviceCtx)
+      }),
+    }
+
+    apply(mockCtx as any, config)
+    rpcHandler = connectionHarness.call
+    toolManager.syncServerTools('analytics', mockClient as any, tools, config.servers.analytics)
+
+    // Render the form tool once to obtain a live session token bound to agent-1
+    sessionToken = ''
+    return (async () => {
+      const formDef = registeredToolDefs[registeredToolDefs.length - 1]
+      const execResult = await formDef.execute({}, { agent: { id: 'agent-1' }, callId: 'c-1', rootCallId: 'c-root' })
+      sessionToken = execResult._sessionToken ?? ''
+      expect(sessionToken).toBeTruthy()
+    })()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('rejects a message with no session token', async () => {
+    const res = await rpcHandler('messages', {
+      role: 'user',
+      content: [{ type: 'text', text: 'hello' }],
+    })
+    expect(res).toEqual({
+      ok: false,
+      error: {
+        code: 'unauthorized',
+        message: 'Missing session token',
+        details: {},
+      },
+    })
+    expect(followupSpy).not.toHaveBeenCalled()
+  })
+
+  it('rejects a message with no text content', async () => {
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'user',
+      content: [],
+    })
+    expect(res).toEqual({
+      ok: false,
+      error: {
+        code: 'bad-request',
+        message: 'No text content blocks in message',
+        details: {},
+      },
+    })
+    expect(followupSpy).not.toHaveBeenCalled()
+  })
+
+  it('rejects unsupported roles', async () => {
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'assistant',
+      content: [{ type: 'text', text: 'hi' }],
+    })
+    expect(res).toEqual({
+      ok: false,
+      error: {
+        code: 'bad-request',
+        message: 'Unsupported message role assistant',
+        details: {},
+      },
+    })
+    expect(followupSpy).not.toHaveBeenCalled()
+  })
+
+  it('rejects messages when the session is not bound to an agent', async () => {
+    // A session created without an agent (callTool path without exec context) — simulate by hitting the route
+    // with a token from a session that has no agentId. We can't easily forge one via the public API here,
+    // so drop agentId by clearing mock: get() returns undefined for unknown agent.
+    ;(mockAgentRegistry.get as any).mockReturnValue(undefined)
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'user',
+      content: [{ type: 'text', text: 'hello' }],
+    })
+    expect(res).toEqual({
+      ok: false,
+      error: {
+        code: 'unavailable',
+        message: 'No live agent for session agent-1',
+        details: {},
+      },
+    })
+  })
+
+  it('delivers a text message to the bound agent via followup', async () => {
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'user',
+      content: [
+        { type: 'text', text: 'the answer is 42' },
+        { type: 'image', data: 'iVBORw0KGgo=' },
+      ],
+    })
+    expect(res).toEqual({ ok: true, value: { delivered: true } })
+    expect(followupSpy).toHaveBeenCalledTimes(1)
+    const msg = followupSpy.mock.calls[0][0]
+    expect(msg.role).toBe('user')
+    expect(msg.source).toEqual({ kind: 'user' })
+    expect(msg.content).toEqual([{ type: 'text', text: 'the answer is 42' }])
+  })
+})
+

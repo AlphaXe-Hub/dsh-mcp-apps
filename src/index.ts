@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { clientRequestSchema } from '@deepseek-ai/dsh-client-connection'
 import type { ConnectionRpcResult, HostConnectionFetch } from '@deepseek-ai/dsh-client-connection'
 import type { AgentRegistry } from '@deepseek-ai/dsh-agent'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService, ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { Config } from './config'
 import { AppSessionStore } from './session-store'
@@ -33,14 +34,14 @@ export function apply(ctx: Context, config: Config) {
         if (approvalService === service) approvalService = undefined
       }
     })
-    ctx.inject(['agents'], serviceCtx => {
-      const service = serviceCtx.agents
-      agentsService = service
-      return () => {
-        if (agentsService === service) agentsService = undefined
-      }
-    })
   }
+  ctx.inject(['agents'], serviceCtx => {
+    const service = serviceCtx.agents
+    agentsService = service
+    return () => {
+      if (agentsService === service) agentsService = undefined
+    }
+  })
   const notifyUiToolsChanged = () => {
     try {
       ctx.emit('ui-tools/changed')
@@ -194,6 +195,47 @@ export function apply(ctx: Context, config: Config) {
               return { ok: true as const, value: result }
             }
 
+            case 'messages': {
+              const session = requireSession(params)
+              if ('error' in session) return session.error
+              if (!session.session.agentId) {
+                return failure('unavailable', 'Session is not bound to a running agent')
+              }
+              if (!agentsService) {
+                return failure('unavailable', 'Agent registry is not available')
+              }
+              const agent = agentsService.get(session.session.agentId)
+              if (!agent) {
+                return failure('unavailable', `No live agent for session ${session.session.agentId}`)
+              }
+              const role = params.role
+              if (role !== 'user') {
+                return failure('bad-request', `Unsupported message role ${String(role)}`)
+              }
+              const rawContent = params.content
+              if (!Array.isArray(rawContent)) {
+                return failure('bad-request', 'Missing content array')
+              }
+              const content = rawContent
+                .map(block => {
+                  if (block && typeof block === 'object' && (block as { type?: unknown }).type === 'text' && typeof (block as { text?: unknown }).text === 'string') {
+                    return { type: 'text', text: (block as { text: string }).text }
+                  }
+                  return null
+                })
+                .filter((block): block is { type: 'text'; text: string } => block !== null)
+              if (content.length === 0) {
+                return failure('bad-request', 'No text content blocks in message')
+              }
+              try {
+                const message = createUserMessage({ content, source: { kind: 'user' } })
+                agent.followup(message)
+              } catch (err) {
+                return failure('internal-error', `Failed to deliver message: ${err instanceof Error ? err.message : String(err)}`)
+              }
+              return { ok: true as const, value: { delivered: true } }
+            }
+
             case 'oauth/authorize': {
               // No session token: starting an auth flow for a server the
               // caller can already see in `servers/status` carries nothing
@@ -248,7 +290,7 @@ export function apply(ctx: Context, config: Config) {
       }
     }
 
-    const endpoints = ['tools/list-ui', 'servers/status', 'resources/list', 'resources/read', 'resources/read-raw', 'tools/call', 'oauth/authorize', 'oauth/disconnect', 'servers/retry'] as const
+    const endpoints = ['tools/list-ui', 'servers/status', 'resources/list', 'resources/read', 'resources/read-raw', 'tools/call', 'messages', 'oauth/authorize', 'oauth/disconnect', 'servers/retry'] as const
     const unregisterPostRoutes = endpoints.map(endpoint => connectionFetch.register({
       path: `/api/mcp-apps/${endpoint}`,
       methods: ['POST'],

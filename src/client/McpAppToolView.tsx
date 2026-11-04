@@ -444,6 +444,12 @@ export function McpAppToolView({ tool, connection, block }: McpAppToolViewProps)
     const revealOwnAncestors = () => {
       if (!active || userCollapsed || gesturePending) return
 
+      // Heal the observer/gesture binding first: the Turn disclosure may
+      // have only just been committed around the block (see bindTarget
+      // below), so the binding captured when this view first rendered can
+      // be watching a node too deep to ever see the host's fold mutations.
+      bindTarget()
+
       let el: HTMLElement | null = iframe.parentElement
       while (el && el !== document.body) {
         if (el.hasAttribute('hidden')) {
@@ -457,8 +463,6 @@ export function McpAppToolView({ tool, connection, block }: McpAppToolViewProps)
         el = el.parentElement
       }
     }
-
-    const targetToObserve = iframe.closest?.('[data-turn-process]') ?? iframe.parentElement ?? document.body
 
     // Resolved lazily rather than once at mount: the App's iframe is not yet
     // inside the Turn disclosure on the commit that first renders it, so a
@@ -514,18 +518,38 @@ export function McpAppToolView({ tool, connection, block }: McpAppToolViewProps)
       markUserGesture()
     }
 
-    targetToObserve.addEventListener('pointerdown', markUserGestureOnToggle, true)
-    targetToObserve.addEventListener('keydown', markUserGestureOnToggle, true)
-
+    // The observer and the user-gesture listeners bind to the Turn
+    // disclosure — but the iframe is NOT inside it yet on the commit that
+    // first renders it (see findTurnProcess below). An eager one-time
+    // binding captured here watches a node too deep to ever see the host's
+    // fold mutations, leaving only the one-shot timers below to defend the
+    // view — the "appears, then silently disappears" failure once those
+    // timers expire. So the binding is self-healing: every reveal pass
+    // (observer callback and timer alike) re-resolves the target and
+    // re-binds observer + listeners when the iframe has moved into the
+    // disclosure, well before the host folds the completed Turn.
     const observer = new MutationObserver(() => {
       revealOwnAncestors()
     })
 
-    observer.observe(targetToObserve, {
-      attributes: true,
-      attributeFilter: ['hidden', 'data-open', 'aria-expanded'],
-      subtree: true,
-    })
+    let observedTarget: Element | null = null
+    const bindTarget = () => {
+      const next: Element = iframe.closest?.('[data-turn-process]') ?? iframe.parentElement ?? document.body
+      if (next === observedTarget) return
+      if (observedTarget) {
+        observedTarget.removeEventListener('pointerdown', markUserGestureOnToggle, true)
+        observedTarget.removeEventListener('keydown', markUserGestureOnToggle, true)
+      }
+      observedTarget = next
+      observedTarget.addEventListener('pointerdown', markUserGestureOnToggle, true)
+      observedTarget.addEventListener('keydown', markUserGestureOnToggle, true)
+      observer.disconnect()
+      observer.observe(observedTarget, {
+        attributes: true,
+        attributeFilter: ['hidden', 'data-open', 'aria-expanded'],
+        subtree: true,
+      })
+    }
 
     // The disclosure is rendered asynchronously after the App resource
     // arrives, so re-assert across the first few commits as well.
@@ -543,8 +567,10 @@ export function McpAppToolView({ tool, connection, block }: McpAppToolViewProps)
       clearTimeout(t4)
       clearSettle()
       observer.disconnect()
-      targetToObserve.removeEventListener('pointerdown', markUserGestureOnToggle, true)
-      targetToObserve.removeEventListener('keydown', markUserGestureOnToggle, true)
+      if (observedTarget) {
+        observedTarget.removeEventListener('pointerdown', markUserGestureOnToggle, true)
+        observedTarget.removeEventListener('keydown', markUserGestureOnToggle, true)
+      }
     }
   }, [resource])
 

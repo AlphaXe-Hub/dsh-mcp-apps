@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { apply } from '../src/index'
 import { normalizeAppMessagesSetting } from '../src/config'
 import type { Config } from '../src/config'
+import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 import { ServerPool } from '../src/transports/server-pool'
 import type { ServerToolManager } from '../src/tool-manager'
@@ -968,3 +969,122 @@ describe('RPC messages (ui/message form submission)', () => {
   })
 })
 
+
+describe('RPC messages policy (allowAppMessages)', () => {
+  const approvalMock = { request: vi.fn(async (): Promise<ApprovalOutcome> => 'allowed-once') }
+
+  function makeHarness(config: Config, services: { approval?: unknown } = {}) {
+    let rpcHandlerLocal: (endpoint: string, payload: unknown, signal?: AbortSignal) => Promise<any>
+    let toolManagerLocal!: ServerToolManager
+    const registeredToolDefsLocal: any[] = []
+    const followupSpyLocal = vi.fn()
+    const client = { callTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }] })) }
+    const tools: Tool[] = [{
+      name: 'render_form',
+      description: 'Render interactive form',
+      inputSchema: { type: 'object' },
+      _meta: { ui: { resourceUri: 'ui://analytics/form' } },
+    }]
+    ;(mockAgentRegistry.get as any).mockImplementation((id: string) => ({ followup: followupSpyLocal, id }))
+    vi.spyOn(ServerPool.prototype, 'startAll').mockImplementation(function (this: any) {
+      toolManagerLocal = this.toolManager
+      return Promise.resolve()
+    })
+    vi.spyOn(ServerPool.prototype, 'stopAll').mockResolvedValue(undefined)
+    const connectionHarness = makeConnectionHarness()
+    const injectMock = vi.fn((requested: string[], factory: (serviceCtx: any) => any) => {
+      const serviceCtx: Record<string, unknown> = {}
+      if (requested.includes('agents')) serviceCtx.agents = mockAgentRegistry
+      if (requested.includes('approval')) serviceCtx.approval = services.approval
+      return factory(serviceCtx)
+    })
+    const mockCtx = {
+      tools: { register: vi.fn((def: any) => { registeredToolDefsLocal.push(def); return vi.fn() }) },
+      connection: connectionHarness.connection,
+      effect: vi.fn((fn: () => any) => fn()),
+      inject: injectMock,
+    }
+    apply(mockCtx as any, config)
+    rpcHandlerLocal = connectionHarness.call
+    toolManagerLocal.syncServerTools('analytics', client as any, tools, (config as any).servers.analytics)
+    return {
+      async sessionToken(): Promise<string> {
+        const formDef = registeredToolDefsLocal[registeredToolDefsLocal.length - 1]
+        const execResult = await formDef.execute({}, { agent: { id: 'agent-1' }, callId: 'c-1', rootCallId: 'c-root' })
+        return execResult._sessionToken as string
+      },
+      rpc: (payload: unknown) => rpcHandlerLocal('messages', payload),
+      followupSpy: followupSpyLocal,
+      injectMock,
+    }
+  }
+
+  const baseServer = { transport: 'stdio' as const, command: 'analytics-srv', allowAppToolCalls: true }
+
+  it('rejects messages when the policy is deny', async () => {
+    const h = makeHarness({ servers: { analytics: { ...baseServer, allowAppMessages: 'deny' } } } as any)
+    const token = await h.sessionToken()
+    const res = await h.rpc({ sessionToken: token, role: 'user', content: [{ type: 'text', text: 'hi' }] })
+    expect(res).toEqual({
+      ok: false,
+      error: { code: 'forbidden', message: 'App messages are disabled for this server', details: {} },
+    })
+    expect(h.followupSpy).not.toHaveBeenCalled()
+  })
+
+  it('normalizes boolean shorthand', async () => {
+    const h = makeHarness({ servers: { analytics: { ...baseServer, allowAppMessages: false } } } as any)
+    const token = await h.sessionToken()
+    const res = await h.rpc({ sessionToken: token, role: 'user', content: [{ type: 'text', text: 'hi' }] })
+    expect(res.ok).toBe(false)
+    expect((res as any).error.code).toBe('forbidden')
+  })
+
+  it('asks for consent once per session under approve, then flows', async () => {
+    approvalMock.request.mockClear()
+    const h = makeHarness({ servers: { analytics: { ...baseServer, allowAppMessages: 'approve' } } } as any, { approval: approvalMock })
+    const token = await h.sessionToken()
+    const first = await h.rpc({ sessionToken: token, role: 'user', content: [{ type: 'text', text: 'first' }] })
+    expect(first).toEqual({ ok: true, value: { delivered: true } })
+    expect(approvalMock.request).toHaveBeenCalledTimes(1)
+    const approvalReq = (approvalMock.request.mock.calls[0] as unknown[])[0] as { toolName: string; reason: string }
+    expect(approvalReq.toolName).toBe('mcp-apps/message')
+    expect(approvalReq.reason).toContain('analytics')
+    const second = await h.rpc({ sessionToken: token, role: 'user', content: [{ type: 'text', text: 'second' }] })
+    expect(second).toEqual({ ok: true, value: { delivered: true } })
+    expect(approvalMock.request).toHaveBeenCalledTimes(1)
+    expect(h.followupSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects the message when consent is rejected', async () => {
+    approvalMock.request.mockImplementationOnce(async () => 'rejected' as ApprovalOutcome)
+    const h = makeHarness({ servers: { analytics: { ...baseServer, allowAppMessages: 'approve' } } } as any, { approval: approvalMock })
+    const token = await h.sessionToken()
+    const res = await h.rpc({ sessionToken: token, role: 'user', content: [{ type: 'text', text: 'hi' }] })
+    expect(res).toEqual({
+      ok: false,
+      error: { code: 'forbidden', message: 'App message was rejected', details: {} },
+    })
+    expect(h.followupSpy).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the approval service is unavailable under approve', async () => {
+    const h = makeHarness({ servers: { analytics: { ...baseServer, allowAppMessages: 'approve' } } } as any)
+    const token = await h.sessionToken()
+    const res = await h.rpc({ sessionToken: token, role: 'user', content: [{ type: 'text', text: 'hi' }] })
+    expect(res).toEqual({
+      ok: false,
+      error: { code: 'unavailable', message: 'Approval service is not available for app messages', details: {} },
+    })
+  })
+
+  it('injects the approval service when only allowAppMessages is approve', () => {
+    const h = makeHarness({ servers: { analytics: { ...baseServer, allowAppToolCalls: 'deny', allowAppMessages: 'approve' } } } as any, { approval: approvalMock })
+    const requested = h.injectMock.mock.calls.map(call => call[0]).flat()
+    expect(requested).toContain('approval')
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+})

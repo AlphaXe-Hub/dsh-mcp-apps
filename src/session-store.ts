@@ -20,6 +20,8 @@ export interface AppSession {
   allowedReverseTools: Set<string>
   agentId?: AgentSessionId
   callId?: ToolCallIdentifier
+  /** Timestamp (ms) of the human's one-per-session consent to deliver app messages ('approve' policy). */
+  messagesConsentedAt?: number
   createdAt: number
   expiresAt: number
 }

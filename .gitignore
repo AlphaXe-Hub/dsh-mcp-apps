@@ -5,3 +5,8 @@ lib/
 .claude/
 *.tgz
 .metaprobe/
+.pnpm-store/
+.pnpm-home/
+.npm-cache-tmp/
+.runtime-inspect/
+.live-oauth-test/

@@ -15,3 +15,12 @@ Everything code-side and GitHub-side from the prior round of this list is done. 
   - On the trusted publisher (GitHub Actions OIDC) configuration, restrict it to **publish only** and turn off staged publishing, which `release.yml` never uses.
 
 Neither of these is verifiable from the CLI (`npm token revoke` needs an authenticated session; the access-control toggles have no `npm` CLI equivalent) — confirm both directly on npmjs.com.
+
+## Code Tasks
+
+- [ ] **RFC 9207 (OAuth 2.0 Authorization Server Issuer Identification) compliance**
+  - In [`handleOAuthCallback` in `src/index.ts`](src/index.ts), extract the `iss` query parameter from the callback URL and pass it to `pool.completeOAuthCallback(server, code, state, iss)`.
+  - In [`completeOAuthCallback` in `src/transports/server-pool.ts`](src/transports/server-pool.ts), validate that if `iss` is present, it matches `authorizationServerMetadata.issuer` (or `authorizationServerUrl`). Reject the authorization response and abort token exchange on mismatch per RFC 9207 §2.3.
+  - Add unit tests in `tests/` verifying callback behavior: succeeds when `iss` matches expected issuer, succeeds when `iss` is omitted (fallback via state and server-specific callback URI), and rejects when `iss` mismatches.
+
+- [ ] **OAuth token store ignores `DSH_HOME`** (`src/transports/oauth-token-store.ts:8` derives its path from `homedir()`), so an instance booted with an isolated `DSH_HOME` still reads/writes the *real* user's `~/.dsh/mcp-apps/oauth` store — the packaged smoke tests never notice (stdio fixtures), but any isolated instance with an OAuth server shares and mutates the user's tokens. Consider honoring `DSH_HOME` like the rest of DSH's state, or documenting the `HOME`-override workaround.

@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.5] - 2026-11-05
+
+### Changed
+
+- **DSH `0.2.1-rc.5` compatibility**: all `@deepseek-ai/dsh-*` peer ranges bumped from `^0.1.7-rc.2` to `^0.2.1-rc.5`, and the matching devDependencies from the exact `0.1.7-rc.2` to the exact `0.2.1-rc.5`. DSH's `evaluatePluginCompatibility` checker rejects plugins whose dsh peers don't satisfy the running version, so `0.2.4` and earlier refuse to load on the `0.2.1-rc.5` runtime (the version now shipped inside the DeepSeek Harness desktop application).
+- Cordis devDependency repinned to the exact `4.0.5` the `0.2.1-rc.5` runtime ships; the `^4.0.2` peer range is unchanged (cordis is not covered by the DSH checker).
+- `scripts/smoke-dsh.mjs` now installs and runs `@deepseek-ai/dsh@0.2.1-rc.5` for the packaged smoke test.
+- `docs/dsh-compatibility.md` and the README compatibility table updated to the new baseline.
+
+### Removed
+
+- **`@deepseek-ai/dsh-client-ui-slots` peer**: the package no longer exists in the DSH `0.2.1-rc.5` runtime; the browser `slots` service is now provided by `@deepseek-ai/dsh-client-ui-renderer`. This plugin never imported the package (the client code injects the `slots` service by name only), so the peer was dropped rather than retargeted. The `tool.call.toolview` and `plugins.detail.section` slot names this plugin registers against are unchanged.
+
+### Fixed
+
+- **Client: app views no longer silently disappear when the turn folds.** The `McpAppToolView` reveal loop bound its MutationObserver target — and the user-gesture listeners that make a manual collapse stick — eagerly, on the first React commit where the iframe exists. The chat host commits the turn-process disclosure around the tool block on a later commit, so that eager binding watched a node too deep to ever observe the host's fold mutations; only the one-shot 300–2500 ms reveal timers defended the view, and a fold landing after they expired was final. The binding is now self-healing: every reveal pass re-resolves the target from the live iframe and re-binds the observer and listeners when it changes, and the effect cleanup removes listeners from the currently-bound node. Adds `tests/client-plugin-race.spec.ts`, which reproduces the real host commit order (the view mounts outside the disclosure, which is committed around the block afterwards) and fails against the old eager binding.
+- `tests/dsh-host-contract.spec.ts` now passes an owner `PeerScope` to `ConnectionFetchHandler.fetch`: under DSH `0.2.1-rc.5` the shared-channel fetch handler takes a required `peer` argument and answers `403` for exact routes when the dispatching peer's principal is not `owner` (the plugin's own registered routes are unaffected — the dispatcher invokes them with the request only).
+
 ## [0.2.4] - 2026-09-30
 
 ### Added

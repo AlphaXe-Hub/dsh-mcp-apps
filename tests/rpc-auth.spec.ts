@@ -971,10 +971,8 @@ describe('RPC messages (ui/message form submission)', () => {
     expect(followupSpy).not.toHaveBeenCalled()
   })
 
-  it('rejects messages when the session is not bound to an agent', async () => {
-    // A session created without an agent (callTool path without exec context) — simulate by hitting the route
-    // with a token from a session that has no agentId. We can't easily forge one via the public API here,
-    // so drop agentId by clearing mock: get() returns undefined for unknown agent.
+  it('rejects messages when the bound agent is gone, without leaking its id', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     ;(mockAgentRegistry.get as any).mockReturnValue(undefined)
     const res = await rpcHandler('messages', {
       sessionToken,
@@ -985,10 +983,12 @@ describe('RPC messages (ui/message form submission)', () => {
       ok: false,
       error: {
         code: 'unavailable',
-        message: 'No live agent for session agent-1',
+        message: 'No live agent for this session',
         details: {},
       },
     })
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('agent-1'))
+    warnSpy.mockRestore()
   })
 
   it('delivers a text message to the bound agent via followup', async () => {

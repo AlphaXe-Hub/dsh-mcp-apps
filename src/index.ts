@@ -211,7 +211,8 @@ export function apply(ctx: Context, config: Config) {
               }
               const agent = agentsService.get(session.session.agentId)
               if (!agent) {
-                return failure('unavailable', `No live agent for session ${session.session.agentId}`)
+                console.warn(`mcp-apps: app message addressed a missing agent ${session.session.agentId} (server ${session.session.serverName})`)
+                return failure('unavailable', 'No live agent for this session')
               }
               const role = params.role
               if (role !== 'user') {
@@ -269,7 +270,8 @@ export function apply(ctx: Context, config: Config) {
                 })
                 agent.followup(message)
               } catch (err) {
-                return failure('internal-error', `Failed to deliver message: ${err instanceof Error ? err.message : String(err)}`)
+                console.warn(`mcp-apps: failed to deliver app message to agent ${session.session.agentId}:`, err instanceof Error ? err.message : String(err))
+                return failure('internal-error', 'Failed to deliver message')
               }
               session.session.messageDeliveries.push(now)
               console.info(`mcp-apps: delivered app message server=${session.session.serverName} tool=${session.session.rawToolName} agent=${session.session.agentId} chars=${validated.content.reduce((total, block) => total + block.text.length, 0)}`)

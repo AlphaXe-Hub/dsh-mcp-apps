@@ -31,10 +31,10 @@ MCP servers can return more than text: the [MCP Apps](https://github.com/modelco
 ## Requirements
 
 - Node.js >= 22
-- [DSH (DeepSeek Harness)](https://github.com/deepseek-ai/deepseek-harness) `>= 0.1.7-rc.2` with Cordis `~4.0.4`
+- [DSH (DeepSeek Harness)](https://github.com/deepseek-ai/deepseek-harness) `>= 0.2.1-rc.5` with Cordis `4.0.5`
 - The **web** profile, for the iframe UI. The plugin's client bundle is injected only when `dsh.client.platform` is `web` (see `package.json`), so its UI does not render in other profiles (e.g. `tui`, `headless`) even if the plugin is installed there — but the plugin's host-side tools still register on those profiles (see [Features](#features)).
 
-The packed plugin has been installed and exercised in a clean DSH `0.1.7-rc.2` web profile, including iframe rendering and delivery of the fixture tool input/result. Other DSH/Cordis combinations remain unverified; see [the compatibility record](docs/dsh-compatibility.md).
+The packed plugin was previously installed and exercised in a clean DSH `0.1.7-rc.2` web profile, including iframe rendering and delivery of the fixture tool input/result. The current `0.2.1-rc.5` baseline is verified by typecheck, the unit/contract suites, the artifact tests against that runtime's published packages, and a passing packaged smoke test against `@deepseek-ai/dsh@0.2.1-rc.5` (temporary profile, headless browser, full MCP App workflow); an install into a real web profile remains to be run — see [the compatibility record](docs/dsh-compatibility.md).
 
 ### Compatibility
 
@@ -42,7 +42,8 @@ DSH checks a plugin's `@deepseek-ai/dsh-*` peer ranges against its own runtime v
 
 | `dsh-mcp-apps` | Requires DSH |
 | :--- | :--- |
-| `0.2.2` and later | `>= 0.1.7-rc.2` |
+| `0.2.5` and later | `>= 0.2.1-rc.5` |
+| `0.2.2` – `0.2.4` | `>= 0.1.7-rc.2` |
 | `0.2.1` and earlier | `0.1.5-rc.x` |
 
 See [docs/dsh-compatibility.md](docs/dsh-compatibility.md) for how the check works and why an exact-pinned peer (no range operator) fails against a later prerelease.

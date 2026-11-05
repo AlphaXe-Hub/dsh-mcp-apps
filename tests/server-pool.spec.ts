@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ServerPool, sanitizeErrorMessage, formatErrorMessage } from '../src/transports/server-pool'
 import { ServerToolManager } from '../src/tool-manager'
 import { AppSessionStore } from '../src/session-store'
+import type { ServerConfig } from '../src/config'
 
 describe('ServerPool Lifecycle', () => {
   it('startAll runs servers in parallel and slow server does not block others', async () => {
@@ -501,5 +502,41 @@ describe('ServerPool retryServer', () => {
     expect((pool as any).reconnectTimers.has('srv')).toBe(false)
     expect((pool as any).reconnectAttempts.has('srv')).toBe(false)
     expect(startSpy).toHaveBeenCalledOnce()
+  })
+})
+
+describe('secretValuesFor with OAuth clientSecret', () => {
+  const originalEnv = process.env
+  const toolManagerStub = { getUiToolsSnapshot: () => [] } as any
+
+  beforeEach(() => {
+    process.env = { ...originalEnv, OAUTH_SECRET: 'my-confidential-secret-999' }
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  it('includes expanded oauth.clientSecret in secret redaction values', () => {
+    const config: ServerConfig = {
+      transport: 'streamable-http',
+      url: 'https://mcp.example.com',
+      headers: { Authorization: 'Bearer token-123' },
+      oauth: {
+        clientId: 'client',
+        clientSecret: '${OAUTH_SECRET}',
+      },
+      allowedVars: ['OAUTH_SECRET'],
+    }
+
+    const pool = new ServerPool({} as any, {
+      servers: { test_server: config },
+    }, toolManagerStub)
+
+    const error = new Error('Failed to connect with secret my-confidential-secret-999 at https://mcp.example.com')
+    const sanitized = pool.sanitizeError('test_server', error)
+
+    expect(sanitized).not.toContain('my-confidential-secret-999')
+    expect(sanitized).toContain('[redacted]')
   })
 })

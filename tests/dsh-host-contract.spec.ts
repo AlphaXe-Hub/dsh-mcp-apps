@@ -123,11 +123,14 @@ describe('DSH host contracts', () => {
     expect(firstFiber.state).not.toBe(0)
     expect(webRoutes.size).toBe(0)
     const handler = connection!.createSharedFetchHandler('/api')
+    // 0.2.1-rc.5 contract: dispatch identifies the calling Peer; exact routes
+    // reject any non-owner principal.
+    const peer = connection!.createPeer({ principal: { kind: 'owner' } })
     const response = await handler.fetch(new Request('http://dsh.internal/api/mcp-apps/tools/list-ui', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'client-request', rpcId: 'contract-id', method: 'mcp-apps/tools/list-ui', payload: null }),
-    }))
+    }), peer)
     expect(await response.json()).toEqual({ type: 'server-response', rpcId: 'contract-id', result: { ok: true, value: [] } })
 
     await firstFiber.dispose()
@@ -135,7 +138,7 @@ describe('DSH host contracts', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'client-request', rpcId: 'contract-id', method: 'mcp-apps/tools/list-ui', payload: null }),
-    }))
+    }), peer)
     expect(removed.status).toBe(404)
     expect(stopAll).toHaveBeenCalledOnce()
 
@@ -203,11 +206,12 @@ describe('DSH host contracts', () => {
     expect(featureFiber.state).not.toBe(0)
     expect(startAll).toHaveBeenCalledOnce()
     const handler = connection!.createSharedFetchHandler('/api')
+    const peer = connection!.createPeer({ principal: { kind: 'owner' } })
     const response = await handler.fetch(new Request('http://dsh.internal/api/mcp-apps/tools/list-ui', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'client-request', rpcId: 'headless-id', method: 'mcp-apps/tools/list-ui', payload: null }),
-    }))
+    }), peer)
     expect(await response.json()).toEqual({ type: 'server-response', rpcId: 'headless-id', result: { ok: true, value: [] } })
 
     await featureFiber.dispose()

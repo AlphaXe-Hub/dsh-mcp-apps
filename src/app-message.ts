@@ -18,6 +18,23 @@ export function appMessageProvenancePrefix(server: string, tool: string): string
 }
 
 /**
+ * Sanitize a server or tool name for interpolation into human/model-visible
+ * text (provenance prefix, consent reason). The raw name stays in the durable
+ * source kind and host-side logs; this neutralizes the display channel: strip
+ * invisible/bidirectional control characters, collapse whitespace, neutralize
+ * quotes (so a crafted tool name cannot spoof the prefix delimiters or smuggle
+ * hidden instructions), and cap the length.
+ */
+export function sanitizeProvenanceName(name: string): string {
+  return name
+    .replace(INVISIBLE_CHAR_PATTERN, '')
+    .replace(/\s+/g, ' ')
+    .replaceAll('"', "'")
+    .slice(0, 64)
+    .trim()
+}
+
+/**
  * Unicode tag characters (U+E0000-U+E007F) and bidirectional control
  * characters render as nothing in a transcript while the model reads the full
  * text — reject them so a reviewer can see everything the message says.

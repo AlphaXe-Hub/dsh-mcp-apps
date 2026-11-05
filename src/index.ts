@@ -5,7 +5,7 @@ import type { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService, ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { Config, normalizeAppMessagesSetting } from './config'
-import { validateAppMessageContent, appMessageProvenancePrefix } from './app-message'
+import { validateAppMessageContent, appMessageProvenancePrefix, sanitizeProvenanceName } from './app-message'
 import { APP_MESSAGE_WINDOW_MS, MAX_APP_MESSAGES_PER_WINDOW } from './constants'
 import { AppSessionStore } from './session-store'
 import { ServerToolManager, type ToolsService } from './tool-manager'
@@ -236,7 +236,7 @@ export function apply(ctx: Context, config: Config) {
                     agent,
                     toolName: 'mcp-apps/message',
                     callId: session.session.callId,
-                    reason: `MCP App "${session.session.serverName}" / "${session.session.rawToolName}" wants to submit a chat message: "${preview}"`,
+                    reason: `MCP App "${sanitizeProvenanceName(session.session.serverName)}" / "${sanitizeProvenanceName(session.session.rawToolName)}" wants to submit a chat message: "${preview}"`,
                     signal,
                   })
                   if (approvalService !== currentApproval) {
@@ -261,7 +261,7 @@ export function apply(ctx: Context, config: Config) {
               try {
                 const content = validated.content.map((block, index) =>
                   index === 0
-                    ? { type: 'text' as const, text: appMessageProvenancePrefix(session.session.serverName, session.session.rawToolName) + block.text }
+                    ? { type: 'text' as const, text: appMessageProvenancePrefix(sanitizeProvenanceName(session.session.serverName), sanitizeProvenanceName(session.session.rawToolName)) + block.text }
                     : block
                 )
                 const message = createUserMessage({

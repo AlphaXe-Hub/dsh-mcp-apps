@@ -5,6 +5,7 @@ import type { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService, ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { Config } from './config'
+import { validateAppMessageContent } from './app-message'
 import { AppSessionStore } from './session-store'
 import { ServerToolManager, type ToolsService } from './tool-manager'
 import { ServerPool } from './transports/server-pool'
@@ -212,23 +213,10 @@ export function apply(ctx: Context, config: Config) {
               if (role !== 'user') {
                 return failure('bad-request', `Unsupported message role ${String(role)}`)
               }
-              const rawContent = params.content
-              if (!Array.isArray(rawContent)) {
-                return failure('bad-request', 'Missing content array')
-              }
-              const content = rawContent
-                .map(block => {
-                  if (block && typeof block === 'object' && (block as { type?: unknown }).type === 'text' && typeof (block as { text?: unknown }).text === 'string') {
-                    return { type: 'text', text: (block as { text: string }).text }
-                  }
-                  return null
-                })
-                .filter((block): block is { type: 'text'; text: string } => block !== null)
-              if (content.length === 0) {
-                return failure('bad-request', 'No text content blocks in message')
-              }
+              const validated = validateAppMessageContent(params.content)
+              if (!validated.ok) return failure('bad-request', validated.reason)
               try {
-                const message = createUserMessage({ content, source: { kind: 'user' } })
+                const message = createUserMessage({ content: validated.content, source: { kind: 'user' } })
                 agent.followup(message)
               } catch (err) {
                 return failure('internal-error', `Failed to deliver message: ${err instanceof Error ? err.message : String(err)}`)

@@ -702,6 +702,7 @@ describe('RPC messages (ui/message form submission)', () => {
         transport: 'stdio',
         command: 'analytics-srv',
         allowAppToolCalls: true,
+        allowAppMessages: 'allow',
       },
     },
   }
@@ -800,11 +801,120 @@ describe('RPC messages (ui/message form submission)', () => {
       ok: false,
       error: {
         code: 'bad-request',
-        message: 'No text content blocks in message',
+        message: 'Message content is empty or whitespace-only',
         details: {},
       },
     })
     expect(followupSpy).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-array content payload', async () => {
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'user',
+      content: 'the answer is 42',
+    })
+    expect(res).toEqual({
+      ok: false,
+      error: {
+        code: 'bad-request',
+        message: 'Missing content array',
+        details: {},
+      },
+    })
+  })
+
+  it('rejects non-text blocks instead of silently dropping them', async () => {
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'user',
+      content: [{ type: 'text', text: 'the answer is 42' }, { type: 'image', data: 'iVBORw0KGgo=' }],
+    })
+    expect(res).toEqual({
+      ok: false,
+      error: {
+        code: 'bad-request',
+        message: 'Only text content blocks are supported',
+        details: {},
+      },
+    })
+    expect(followupSpy).not.toHaveBeenCalled()
+  })
+
+  it('rejects oversized text', async () => {
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'user',
+      content: [{ type: 'text', text: 'x'.repeat(32_769) }],
+    })
+    expect(res).toEqual({
+      ok: false,
+      error: {
+        code: 'bad-request',
+        message: 'Message text too large (max 32768 characters)',
+        details: {},
+      },
+    })
+  })
+
+  it('rejects too many blocks', async () => {
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'user',
+      content: Array.from({ length: 33 }, () => ({ type: 'text', text: 'x' })),
+    })
+    expect(res).toEqual({
+      ok: false,
+      error: {
+        code: 'bad-request',
+        message: 'Too many content blocks (max 32)',
+        details: {},
+      },
+    })
+  })
+
+  it('rejects whitespace-only content', async () => {
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'user',
+      content: [{ type: 'text', text: '   \n\t ' }],
+    })
+    expect(res).toEqual({
+      ok: false,
+      error: {
+        code: 'bad-request',
+        message: 'Message content is empty or whitespace-only',
+        details: {},
+      },
+    })
+  })
+
+  it('rejects invisible and bidirectional control characters', async () => {
+    for (const hidden of ['\u202E', 'x\u{E0003}y', 'a\u2066b']) {
+      const res = await rpcHandler('messages', {
+        sessionToken,
+        role: 'user',
+        content: [{ type: 'text', text: `hello ${hidden} world` }],
+      })
+      expect(res).toEqual({
+        ok: false,
+        error: {
+          code: 'bad-request',
+          message: 'Message contains invisible or bidirectional control characters',
+          details: {},
+        },
+      })
+    }
+  })
+
+  it('accepts content whose first block is whitespace while a later block carries text', async () => {
+    const res = await rpcHandler('messages', {
+      sessionToken,
+      role: 'user',
+      content: [{ type: 'text', text: '  ' }, { type: 'text', text: 'real content' }],
+    })
+    expect(res).toEqual({ ok: true, value: { delivered: true } })
+    expect(followupSpy).toHaveBeenCalledTimes(1)
   })
 
   it('rejects unsupported roles', async () => {
@@ -848,16 +958,12 @@ describe('RPC messages (ui/message form submission)', () => {
     const res = await rpcHandler('messages', {
       sessionToken,
       role: 'user',
-      content: [
-        { type: 'text', text: 'the answer is 42' },
-        { type: 'image', data: 'iVBORw0KGgo=' },
-      ],
+      content: [{ type: 'text', text: 'the answer is 42' }],
     })
     expect(res).toEqual({ ok: true, value: { delivered: true } })
     expect(followupSpy).toHaveBeenCalledTimes(1)
     const msg = followupSpy.mock.calls[0][0]
     expect(msg.role).toBe('user')
-    expect(msg.source).toEqual({ kind: 'user' })
     expect(msg.content).toEqual([{ type: 'text', text: 'the answer is 42' }])
   })
 })

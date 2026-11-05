@@ -5,3 +5,8 @@
  * transport so the default never drifts between stdio and remote configs.
  */
 export const DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024 // 16 MB
+
+/** Maximum total characters of text delivered by a single app ui/message submission. */
+export const MAX_APP_MESSAGE_TEXT_CHARS = 32_768
+/** Maximum content blocks accepted in a single app ui/message submission. */
+export const MAX_APP_MESSAGE_BLOCKS = 32

@@ -1,9 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { apply } from '../src/index'
+import { normalizeAppMessagesSetting } from '../src/config'
 import type { Config } from '../src/config'
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 import { ServerPool } from '../src/transports/server-pool'
 import type { ServerToolManager } from '../src/tool-manager'
+
+describe('normalizeAppMessagesSetting', () => {
+  it('normalizes every accepted input', () => {
+    expect(normalizeAppMessagesSetting(undefined)).toBe('approve')
+    expect(normalizeAppMessagesSetting('deny')).toBe('deny')
+    expect(normalizeAppMessagesSetting('approve')).toBe('approve')
+    expect(normalizeAppMessagesSetting('allow')).toBe('allow')
+    expect(normalizeAppMessagesSetting(true)).toBe('allow')
+    expect(normalizeAppMessagesSetting(false)).toBe('deny')
+  })
+})
 
 const mockAgentRegistry: {
   get: (id: string) => any

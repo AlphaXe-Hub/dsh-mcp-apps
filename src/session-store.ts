@@ -22,6 +22,8 @@ export interface AppSession {
   callId?: ToolCallIdentifier
   /** Timestamp (ms) of the human's one-per-session consent to deliver app messages ('approve' policy). */
   messagesConsentedAt?: number
+  /** Delivery timestamps (ms) for the per-session sliding-window rate limit. */
+  messageDeliveries: number[]
   createdAt: number
   expiresAt: number
 }
@@ -74,6 +76,7 @@ export class AppSessionStore {
       allowedReverseTools: new Set(allowedReverseTools),
       agentId: options?.agentId,
       callId: options?.callId,
+      messageDeliveries: [],
       createdAt: now,
       expiresAt: now + this.ttlMs,
     }

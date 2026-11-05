@@ -918,6 +918,42 @@ describe('RPC messages (ui/message form submission)', () => {
     expect(followupSpy).toHaveBeenCalledTimes(1)
   })
 
+  it('enforces a per-session rate limit and the window slides', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      for (let i = 0; i < 6; i++) {
+        const res = await rpcHandler('messages', {
+          sessionToken,
+          role: 'user',
+          content: [{ type: 'text', text: `msg ${i}` }],
+        })
+        expect(res).toEqual({ ok: true, value: { delivered: true } })
+      }
+      const throttled = await rpcHandler('messages', {
+        sessionToken,
+        role: 'user',
+        content: [{ type: 'text', text: 'msg 6' }],
+      })
+      expect(throttled).toEqual({
+        ok: false,
+        error: {
+          code: 'too-many-requests',
+          message: 'App message rate limit exceeded for this app session; try again shortly',
+          details: {},
+        },
+      })
+      vi.setSystemTime(new Date(Date.now() + 61_000))
+      const afterWindow = await rpcHandler('messages', {
+        sessionToken,
+        role: 'user',
+        content: [{ type: 'text', text: 'msg after window' }],
+      })
+      expect(afterWindow).toEqual({ ok: true, value: { delivered: true } })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects unsupported roles', async () => {
     const res = await rpcHandler('messages', {
       sessionToken,

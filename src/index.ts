@@ -6,6 +6,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService, ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { Config, normalizeAppMessagesSetting } from './config'
 import { validateAppMessageContent, appMessageProvenancePrefix } from './app-message'
+import { APP_MESSAGE_WINDOW_MS, MAX_APP_MESSAGES_PER_WINDOW } from './constants'
 import { AppSessionStore } from './session-store'
 import { ServerToolManager, type ToolsService } from './tool-manager'
 import { ServerPool } from './transports/server-pool'
@@ -251,6 +252,11 @@ export function apply(ctx: Context, config: Config) {
                   return failure('unavailable', 'App message approval failed')
                 }
               }
+              const now = Date.now()
+              session.session.messageDeliveries = session.session.messageDeliveries.filter(t => now - t < APP_MESSAGE_WINDOW_MS)
+              if (session.session.messageDeliveries.length >= MAX_APP_MESSAGES_PER_WINDOW) {
+                return failure('too-many-requests', 'App message rate limit exceeded for this app session; try again shortly')
+              }
               try {
                 const content = validated.content.map((block, index) =>
                   index === 0
@@ -265,6 +271,7 @@ export function apply(ctx: Context, config: Config) {
               } catch (err) {
                 return failure('internal-error', `Failed to deliver message: ${err instanceof Error ? err.message : String(err)}`)
               }
+              session.session.messageDeliveries.push(now)
               console.info(`mcp-apps: delivered app message server=${session.session.serverName} tool=${session.session.rawToolName} agent=${session.session.agentId} chars=${validated.content.reduce((total, block) => total + block.text.length, 0)}`)
               return { ok: true as const, value: { delivered: true } }
             }

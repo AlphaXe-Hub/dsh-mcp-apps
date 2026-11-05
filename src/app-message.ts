@@ -1,5 +1,22 @@
 import { MAX_APP_MESSAGE_BLOCKS, MAX_APP_MESSAGE_TEXT_CHARS } from './constants'
 
+declare module '@deepseek-ai/dsh-llm/message' {
+  interface MessageSourceMap {
+    /** Message submitted by a rendered MCP App via ui/message (form submission). */
+    'mcp-apps': { kind: 'mcp-apps'; server: string; tool: string }
+  }
+}
+
+/**
+ * Visible provenance prefix prepended to the first text block. The source kind
+ * is the durable record; this line is what the model and today's transcript
+ * UI actually show, so a reader can always tell app-submitted content from
+ * typed input.
+ */
+export function appMessageProvenancePrefix(server: string, tool: string): string {
+  return `[Submitted via MCP App "${server}" / "${tool}" — app-controlled content, not typed by the user] `
+}
+
 /**
  * Unicode tag characters (U+E0000-U+E007F) and bidirectional control
  * characters render as nothing in a transcript while the model reads the full

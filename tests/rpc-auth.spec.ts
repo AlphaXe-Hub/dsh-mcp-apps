@@ -956,6 +956,7 @@ describe('RPC messages (ui/message form submission)', () => {
   })
 
   it('delivers a text message to the bound agent via followup', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const res = await rpcHandler('messages', {
       sessionToken,
       role: 'user',
@@ -965,7 +966,10 @@ describe('RPC messages (ui/message form submission)', () => {
     expect(followupSpy).toHaveBeenCalledTimes(1)
     const msg = followupSpy.mock.calls[0][0]
     expect(msg.role).toBe('user')
-    expect(msg.content).toEqual([{ type: 'text', text: 'the answer is 42' }])
+    expect(msg.source).toEqual({ kind: 'mcp-apps', server: 'analytics', tool: 'render_form' })
+    expect(msg.content[0].text).toBe('[Submitted via MCP App "analytics" / "render_form" — app-controlled content, not typed by the user] the answer is 42')
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('delivered app message'))
+    infoSpy.mockRestore()
   })
 })
 

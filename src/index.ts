@@ -5,7 +5,7 @@ import type { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService, ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import { Config, normalizeAppMessagesSetting } from './config'
-import { validateAppMessageContent } from './app-message'
+import { validateAppMessageContent, appMessageProvenancePrefix } from './app-message'
 import { AppSessionStore } from './session-store'
 import { ServerToolManager, type ToolsService } from './tool-manager'
 import { ServerPool } from './transports/server-pool'
@@ -252,11 +252,20 @@ export function apply(ctx: Context, config: Config) {
                 }
               }
               try {
-                const message = createUserMessage({ content: validated.content, source: { kind: 'user' } })
+                const content = validated.content.map((block, index) =>
+                  index === 0
+                    ? { type: 'text' as const, text: appMessageProvenancePrefix(session.session.serverName, session.session.rawToolName) + block.text }
+                    : block
+                )
+                const message = createUserMessage({
+                  content,
+                  source: { kind: 'mcp-apps', server: session.session.serverName, tool: session.session.rawToolName },
+                })
                 agent.followup(message)
               } catch (err) {
                 return failure('internal-error', `Failed to deliver message: ${err instanceof Error ? err.message : String(err)}`)
               }
+              console.info(`mcp-apps: delivered app message server=${session.session.serverName} tool=${session.session.rawToolName} agent=${session.session.agentId} chars=${validated.content.reduce((total, block) => total + block.text.length, 0)}`)
               return { ok: true as const, value: { delivered: true } }
             }
 
